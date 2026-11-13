@@ -2,7 +2,9 @@ package com.example.widgetmaker
 
 import android.content.Context
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
+import java.util.UUID
 
 @Serializable
 data class WidgetDesign(
@@ -39,25 +41,64 @@ data class Style(
 @Serializable
 data class Action(val type: String, val value: String)   // type: openUrl
 
-/** One active design shared by all widget instances (per-widget designs come later). */
+/** A library of designs plus a mapping from each widget instance to its design. */
 object DesignStore {
     private const val PREFS = "designs"
-    private const val KEY = "active_design"
+    private const val KEY_LIBRARY = "library"
+
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
+    private val prettyJson = Json { ignoreUnknownKeys = true; encodeDefaults = true; prettyPrint = true }
+    private val listSerializer = ListSerializer(WidgetDesign.serializer())
+
+    private fun prefs(context: Context) =
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
 
     fun parse(raw: String): Result<WidgetDesign> =
         runCatching { json.decodeFromString(WidgetDesign.serializer(), raw) }
 
-    fun loadRaw(context: Context): String =
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .getString(KEY, null) ?: Templates.all.first().second
+    fun toJson(design: WidgetDesign): String =
+        prettyJson.encodeToString(WidgetDesign.serializer(), design)
 
-    fun saveRaw(context: Context, raw: String) {
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .edit().putString(KEY, raw).apply()
+    fun all(context: Context): List<WidgetDesign> {
+        val raw = prefs(context).getString(KEY_LIBRARY, null)
+        val stored = raw?.let { runCatching { json.decodeFromString(listSerializer, it) }.getOrNull() }
+        if (!stored.isNullOrEmpty()) return stored
+        val seeded = Templates.all.mapNotNull { parse(it.second).getOrNull() }
+        writeAll(context, seeded)
+        return seeded
     }
 
-    fun load(context: Context): WidgetDesign =
-        parse(loadRaw(context)).getOrNull()
-            ?: parse(Templates.all.first().second).getOrThrow()
+    private fun writeAll(context: Context, list: List<WidgetDesign>) {
+        prefs(context).edit().putString(KEY_LIBRARY, json.encodeToString(listSerializer, list)).apply()
+    }
+
+    fun save(context: Context, design: WidgetDesign) {
+        val list = all(context).toMutableList()
+        val index = list.indexOfFirst { it.id == design.id }
+        if (index >= 0) list[index] = design else list.add(design)
+        writeAll(context, list)
+    }
+
+    fun delete(context: Context, id: String) {
+        val list = all(context).filter { it.id != id }
+        if (list.isNotEmpty()) writeAll(context, list)
+    }
+
+    fun assign(context: Context, appWidgetId: Int, designId: String) {
+        prefs(context).edit().putString("w_$appWidgetId", designId).apply()
+    }
+
+    fun forWidget(context: Context, appWidgetId: Int): WidgetDesign {
+        val list = all(context)
+        val id = prefs(context).getString("w_$appWidgetId", null)
+        return list.firstOrNull { it.id == id } ?: list.first()
+    }
+
+    fun newDesign(): WidgetDesign = WidgetDesign(
+        id = UUID.randomUUID().toString(),
+        name = "New design",
+        elements = listOf(
+            Element(type = "clock", xDp = 16, yDp = 16, style = Style(sizeSp = 36, bold = true))
+        )
+    )
 }

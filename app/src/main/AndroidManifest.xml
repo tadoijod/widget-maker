@@ -16,6 +16,14 @@
             </intent-filter>
         </activity>
 
+        <activity
+            android:name=".WidgetConfigActivity"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_CONFIGURE" />
+            </intent-filter>
+        </activity>
+
         <receiver
             android:name=".DesignWidgetReceiver"
             android:exported="true"

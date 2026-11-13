@@ -15,6 +15,7 @@ import androidx.glance.GlanceModifier
 import androidx.glance.LocalContext
 import androidx.glance.action.clickable
 import androidx.glance.appwidget.GlanceAppWidget
+import androidx.glance.appwidget.GlanceAppWidgetManager
 import androidx.glance.appwidget.GlanceAppWidgetReceiver
 import androidx.glance.appwidget.LinearProgressIndicator
 import androidx.glance.appwidget.action.actionStartActivity
@@ -36,7 +37,8 @@ import java.util.Locale
 
 class DesignWidget : GlanceAppWidget() {
     override suspend fun provideGlance(context: Context, id: GlanceId) {
-        val design = DesignStore.load(context)
+        val appWidgetId = GlanceAppWidgetManager(context).getAppWidgetId(id)
+        val design = DesignStore.forWidget(context, appWidgetId)
         provideContent { DesignCanvas(design) }
     }
 }
