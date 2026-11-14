@@ -24,16 +24,62 @@
             </intent-filter>
         </activity>
 
-        <receiver
-            android:name=".DesignWidgetReceiver"
-            android:exported="true"
-            android:label="@string/widget_name">
+        <receiver android:name=".DesignWidgetReceiver" android:exported="true" android:label="Widget Maker 4x2">
             <intent-filter>
                 <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
             </intent-filter>
-            <meta-data
-                android:name="android.appwidget.provider"
-                android:resource="@xml/widget_info" />
+            <meta-data android:name="android.appwidget.provider" android:resource="@xml/widget_info" />
+        </receiver>
+        <receiver android:name=".Widget2x1Receiver" android:exported="true" android:label="Widget Maker 2x1">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data android:name="android.appwidget.provider" android:resource="@xml/widget_info_2x1" />
+        </receiver>
+        <receiver android:name=".Widget4x1Receiver" android:exported="true" android:label="Widget Maker 4x1">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data android:name="android.appwidget.provider" android:resource="@xml/widget_info_4x1" />
+        </receiver>
+        <receiver android:name=".Widget2x2Receiver" android:exported="true" android:label="Widget Maker 2x2">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data android:name="android.appwidget.provider" android:resource="@xml/widget_info_2x2" />
+        </receiver>
+        <receiver android:name=".Widget3x3Receiver" android:exported="true" android:label="Widget Maker 3x3">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data android:name="android.appwidget.provider" android:resource="@xml/widget_info_3x3" />
+        </receiver>
+        <receiver android:name=".Widget4x3Receiver" android:exported="true" android:label="Widget Maker 4x3">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data android:name="android.appwidget.provider" android:resource="@xml/widget_info_4x3" />
+        </receiver>
+        <receiver android:name=".Widget4x4Receiver" android:exported="true" android:label="Widget Maker 4x4">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data android:name="android.appwidget.provider" android:resource="@xml/widget_info_4x4" />
+        </receiver>
+        <receiver android:name=".Widget2x4Receiver" android:exported="true" android:label="Widget Maker 2x4">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data android:name="android.appwidget.provider" android:resource="@xml/widget_info_2x4" />
+        </receiver>
+
+        <receiver android:name=".PowerReceiver" android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.ACTION_POWER_CONNECTED" />
+                <action android:name="android.intent.action.ACTION_POWER_DISCONNECTED" />
+                <action android:name="android.intent.action.BATTERY_LOW" />
+                <action android:name="android.intent.action.BATTERY_OKAY" />
+            </intent-filter>
         </receiver>
     </application>
 </manifest>

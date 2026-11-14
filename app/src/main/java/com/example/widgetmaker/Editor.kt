@@ -45,11 +45,17 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import java.text.SimpleDateFormat
@@ -60,15 +66,23 @@ private val swatches = listOf(
     "#FFFFFF", "#000000", "#1E1E2E", "#A6E3A1", "#89B4FA",
     "#F9E2AF", "#F38BA8", "#FAB387", "#CBA6F7", "#F5E0DC"
 )
-private val elementTypes = listOf("text", "clock", "date", "battery", "progress")
+private val elementTypes = listOf("text", "clock", "date", "battery", "progress", "todo", "note", "tracker", "countdown")
+private val blockTypes = setOf("todo", "note", "tracker", "countdown")
+private val clockFormats = listOf("HH:mm", "h:mm", "h:mm a", "hh:mm")
+private val dateFormats = listOf("EEE, d MMM", "EEEE", "d MMMM yyyy", "dd/MM/yyyy")
 
-internal fun colorOf(hex: String): Color =
-    runCatching { Color(AColor.parseColor(hex)) }.getOrDefault(Color.White)
+internal fun colorOf(hex: String): Color = Color(parseColorOr(hex))
 
 private fun validColor(hex: String): Boolean =
     runCatching { AColor.parseColor(hex) }.isSuccess
 
-/** Approximate on-screen rendering of a design (the real widget is drawn by Glance). */
+private fun formatNow(pattern: String): String =
+    runCatching { SimpleDateFormat(pattern, Locale.getDefault()).format(Date()) }.getOrDefault("?")
+
+// ---------------------------------------------------------------------------------------------
+// Preview (approximation of the Glance rendering)
+// ---------------------------------------------------------------------------------------------
+
 @Composable
 fun DesignPreview(
     design: WidgetDesign,
@@ -78,17 +92,29 @@ fun DesignPreview(
     onSelect: (Int) -> Unit = {},
     onMove: (Int, Int, Int) -> Unit = { _, _, _ -> }
 ) {
+    val context = LocalContext.current
+    val data = remember { AppDataStore.load(context) }
     val latestSelect by rememberUpdatedState(onSelect)
     val latestMove by rememberUpdatedState(onMove)
-    val clock = remember { SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date()) }
-    val date = remember { SimpleDateFormat("EEE, d MMM", Locale.getDefault()).format(Date()) }
 
-    Box(
-        modifier = modifier
-            .size(design.widthDp.dp, design.heightDp.dp)
-            .clip(RoundedCornerShape(design.cornerRadiusDp.dp))
-            .background(colorOf(design.background.color))
-    ) {
+    val bg = design.background
+    val c1 = colorOf(bg.color)
+    val c2 = bg.color2?.let { colorOf(it) } ?: c1
+    val brush = when (bg.direction) {
+        "horizontal" -> Brush.horizontalGradient(listOf(c1, c2))
+        "diagonal" -> Brush.linearGradient(listOf(c1, c2))
+        else -> Brush.verticalGradient(listOf(c1, c2))
+    }
+    val shape = RoundedCornerShape(design.cornerRadiusDp.dp)
+    var frame: Modifier = modifier
+        .size(design.widthDp.dp, design.heightDp.dp)
+        .clip(shape)
+        .background(brush, alpha = bg.opacity.coerceIn(0, 100) / 100f)
+    if (bg.borderDp > 0) {
+        frame = frame.border(bg.borderDp.dp, colorOf(bg.borderColor), shape)
+    }
+
+    Box(modifier = frame) {
         design.elements.forEachIndexed { i, el ->
             var m: Modifier = Modifier.offset(x = el.xDp.dp, y = el.yDp.dp)
             if (interactive) {
@@ -120,38 +146,130 @@ fun DesignPreview(
                     }
                     .pointerInput(i) { detectTapGestures { latestSelect(i) } }
             }
-            Box(modifier = m) { ElementContent(el, clock, date) }
+            Box(modifier = m) { ElementContent(design, el, data) }
         }
     }
 }
 
 @Composable
-private fun ElementContent(el: Element, clock: String, date: String) {
+private fun ElementContent(design: WidgetDesign, el: Element, data: AppData) {
     val color = colorOf(el.style.color)
-    val widthMod: Modifier = el.widthDp?.let { Modifier.width(it.dp) } ?: Modifier
-    if (el.type == "progress") {
-        LinearProgressIndicator(
-            progress = { 0.85f },
-            modifier = widthMod,
-            color = color,
-            trackColor = Color(0x33FFFFFF)
+    val ts = TextStyle(
+        color = color,
+        fontSize = el.style.sizeSp.sp,
+        fontWeight = if (el.style.bold) FontWeight.Bold else FontWeight.Normal,
+        fontStyle = if (el.italic) FontStyle.Italic else FontStyle.Normal,
+        textAlign = when (el.align) {
+            "center" -> TextAlign.Center
+            "end" -> TextAlign.End
+            else -> TextAlign.Start
+        },
+        textDecoration = if (el.underline) TextDecoration.Underline else TextDecoration.None
+    )
+
+    var m: Modifier = Modifier
+    el.bgColor?.let { m = m.background(colorOf(it), RoundedCornerShape(el.radiusDp.dp)) }
+    m = m.padding(el.padDp.dp)
+    val w: Int? = el.widthDp
+        ?: if (el.type in blockTypes) (design.widthDp - el.xDp - 10).coerceAtLeast(40) else null
+    if (w != null) m = m.width(w.dp)
+
+    when (el.type) {
+        "clock" -> Text(
+            formatNow(el.format?.takeIf { it.isNotBlank() } ?: "HH:mm"),
+            modifier = m, style = ts
         )
-    } else {
-        val value = when (el.type) {
-            "clock" -> clock
-            "date" -> date
-            "battery" -> "85%"
-            else -> el.text.orEmpty()
+        "date" -> Text(
+            formatNow(el.format?.takeIf { it.isNotBlank() } ?: "EEE, d MMM"),
+            modifier = m, style = ts
+        )
+        "battery" -> Text("85%", modifier = m, style = ts)
+        "progress" -> {
+            val t = data.trackers.firstOrNull { it.id == el.source }
+            val fraction = if (t != null) {
+                (t.current().toFloat() / t.goal.coerceAtLeast(1)).coerceIn(0f, 1f)
+            } else {
+                0.85f
+            }
+            LinearProgressIndicator(
+                progress = { fraction },
+                modifier = m,
+                color = color,
+                trackColor = Color(0x33FFFFFF)
+            )
         }
-        Text(
-            text = value,
-            modifier = widthMod,
-            color = color,
-            fontSize = el.style.sizeSp.sp,
-            fontWeight = if (el.style.bold) FontWeight.Bold else FontWeight.Normal
-        )
+        "todo" -> {
+            val list = data.todoLists.firstOrNull { it.id == el.source }
+            Column(modifier = m) {
+                if (list == null) {
+                    Text("Pick a list", style = ts)
+                } else {
+                    val items = (list.items.filter { !it.done } + list.items.filter { it.done })
+                        .take(el.lines.coerceAtLeast(1))
+                    items.forEach { item ->
+                        Row(
+                            modifier = Modifier.padding(vertical = 2.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(if (item.done) "●" else "○", style = ts)
+                            Spacer(Modifier.width(6.dp))
+                            Text(
+                                item.text,
+                                maxLines = 1,
+                                style = if (item.done) {
+                                    ts.copy(
+                                        color = color.copy(alpha = 0.5f),
+                                        textDecoration = TextDecoration.LineThrough
+                                    )
+                                } else ts
+                            )
+                        }
+                    }
+                }
+            }
+        }
+        "note" -> {
+            val note = data.notes.firstOrNull { it.id == el.source }
+            Text(
+                note?.body ?: "Pick a note",
+                modifier = m,
+                style = ts,
+                maxLines = el.lines.coerceAtLeast(1)
+            )
+        }
+        "tracker" -> {
+            val t = data.trackers.firstOrNull { it.id == el.source }
+            if (t == null) {
+                Text("Pick a tracker", modifier = m, style = ts)
+            } else {
+                val unit = if (t.unit.isBlank()) "" else " " + t.unit
+                Row(modifier = m, verticalAlignment = Alignment.CenterVertically) {
+                    Text("-", modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp), style = ts)
+                    Text("${t.current()}/${t.goal}$unit", style = ts)
+                    Text("+", modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp), style = ts)
+                }
+            }
+        }
+        "countdown" -> {
+            val c = data.countdowns.firstOrNull { it.id == el.source }
+            val days = c?.daysLeft()
+            val label = when {
+                c == null -> "Pick a countdown"
+                days == null -> "Bad date"
+                days == 0 -> "Today"
+                days < 0 -> "${-days}d ago"
+                days == 1 -> "1 day"
+                else -> "$days days"
+            }
+            Text(label, modifier = m, style = ts)
+        }
+        else -> Text(el.text.orEmpty(), modifier = m, style = ts)
     }
 }
+
+// ---------------------------------------------------------------------------------------------
+// Editor
+// ---------------------------------------------------------------------------------------------
 
 @Composable
 fun DesignEditor(
@@ -159,6 +277,8 @@ fun DesignEditor(
     onSave: (WidgetDesign) -> Unit,
     onCancel: () -> Unit
 ) {
+    val context = LocalContext.current
+    val data = remember { AppDataStore.load(context) }
     var design by remember { mutableStateOf(initial) }
     var selected by remember { mutableIntStateOf(if (initial.elements.isEmpty()) -1 else 0) }
     var message by remember { mutableStateOf<String?>(null) }
@@ -171,6 +291,14 @@ fun DesignEditor(
         design = design.copy(
             elements = design.elements.mapIndexed { i, e -> if (i == index) change(e) else e }
         )
+    }
+
+    fun defaultSource(type: String): String? = when (type) {
+        "todo" -> data.todoLists.firstOrNull()?.id
+        "note" -> data.notes.firstOrNull()?.id
+        "tracker" -> data.trackers.firstOrNull()?.id
+        "countdown" -> data.countdowns.firstOrNull()?.id
+        else -> null
     }
 
     Column(modifier = Modifier.fillMaxSize().safeDrawingPadding()) {
@@ -214,8 +342,10 @@ fun DesignEditor(
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            Text("Tap an element in the preview to select it, drag to move it.",
-                style = MaterialTheme.typography.bodySmall)
+            Text(
+                "Tap an element in the preview to select it, drag to move it.",
+                style = MaterialTheme.typography.bodySmall
+            )
 
             Row(
                 modifier = Modifier.horizontalScroll(rememberScrollState()),
@@ -226,6 +356,7 @@ fun DesignEditor(
                         val e = Element(
                             type = type,
                             text = if (type == "text") "Hello" else null,
+                            source = defaultSource(type),
                             xDp = 16,
                             yDp = 16,
                             widthDp = if (type == "progress") 150 else null,
@@ -239,133 +370,23 @@ fun DesignEditor(
 
             val el = design.elements.getOrNull(selected)
             if (el != null) {
-                Text("Selected element", style = MaterialTheme.typography.titleSmall)
-
-                Row(
-                    modifier = Modifier.horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    elementTypes.forEach { t ->
-                        FilterChip(
-                            selected = el.type == t,
-                            onClick = {
-                                updateElement(selected) {
-                                    it.copy(
-                                        type = t,
-                                        text = if (t == "text" && it.text == null) "Text" else it.text
-                                    )
-                                }
-                            },
-                            label = { Text(t) }
-                        )
-                    }
-                }
-
-                if (el.type == "text") {
-                    OutlinedTextField(
-                        value = el.text.orEmpty(),
-                        onValueChange = { v -> updateElement(selected) { it.copy(text = v) } },
-                        label = { Text("Text") },
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                }
-
-                if (el.type != "progress") {
-                    LabeledSlider("Size ${el.style.sizeSp} sp", el.style.sizeSp.toFloat(), 8f..72f) { v ->
-                        updateElement(selected) { it.copy(style = it.style.copy(sizeSp = v.toInt())) }
-                    }
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("Bold")
-                        Spacer(Modifier.width(12.dp))
-                        Switch(
-                            checked = el.style.bold,
-                            onCheckedChange = { b ->
-                                updateElement(selected) { it.copy(style = it.style.copy(bold = b)) }
-                            }
-                        )
-                    }
-                }
-
-                if (el.type == "text" || el.type == "progress") {
-                    LabeledSlider(
-                        "Width ${el.widthDp ?: 0} dp (0 = automatic)",
-                        (el.widthDp ?: 0).toFloat(),
-                        0f..300f
-                    ) { v ->
-                        updateElement(selected) {
-                            it.copy(widthDp = if (v.toInt() == 0) null else v.toInt())
-                        }
-                    }
-                }
-
-                LabeledSlider("X position ${el.xDp} dp", el.xDp.toFloat(), 0f..design.widthDp.toFloat()) { v ->
-                    updateElement(selected) { it.copy(xDp = v.toInt()) }
-                }
-                LabeledSlider("Y position ${el.yDp} dp", el.yDp.toFloat(), 0f..design.heightDp.toFloat()) { v ->
-                    updateElement(selected) { it.copy(yDp = v.toInt()) }
-                }
-
-                ColorField("Color", el.style.color) { hex ->
-                    updateElement(selected) { it.copy(style = it.style.copy(color = hex)) }
-                }
-
-                OutlinedTextField(
-                    value = el.action?.value.orEmpty(),
-                    onValueChange = { v ->
-                        updateElement(selected) {
-                            it.copy(action = if (v.isBlank()) null else Action("openUrl", v))
-                        }
-                    },
-                    label = { Text("Tap opens link (optional)") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
-                )
-
-                OutlinedButton(
-                    onClick = {
+                ElementPanel(
+                    el = el,
+                    data = data,
+                    designWidth = design.widthDp,
+                    designHeight = design.heightDp,
+                    update = { change -> updateElement(selected, change) },
+                    onDelete = {
                         val removeAt = selected
                         design = design.copy(
                             elements = design.elements.filterIndexed { i, _ -> i != removeAt }
                         )
                         selected = -1
-                    },
-                    modifier = Modifier.fillMaxWidth()
-                ) { Text("Delete this element") }
-            }
-
-            Text("Widget settings", style = MaterialTheme.typography.titleSmall)
-
-            OutlinedTextField(
-                value = design.name,
-                onValueChange = { design = design.copy(name = it) },
-                label = { Text("Design name") },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth()
-            )
-
-            Row(
-                modifier = Modifier.horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                listOf("2x2" to (110 to 110), "4x2" to (250 to 110), "4x4" to (250 to 250))
-                    .forEach { (label, size) ->
-                        FilterChip(
-                            selected = design.widthDp == size.first && design.heightDp == size.second,
-                            onClick = {
-                                design = design.copy(widthDp = size.first, heightDp = size.second)
-                            },
-                            label = { Text(label) }
-                        )
                     }
+                )
             }
 
-            LabeledSlider("Corner radius ${design.cornerRadiusDp} dp", design.cornerRadiusDp.toFloat(), 0f..48f) { v ->
-                design = design.copy(cornerRadiusDp = v.toInt())
-            }
-
-            ColorField("Background", design.background.color) { hex ->
-                design = design.copy(background = Background(hex))
-            }
+            DesignPanel(design = design, change = { design = it })
 
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedButton(onClick = {
@@ -384,9 +405,271 @@ fun DesignEditor(
                     }
                 }) { Text("Paste JSON") }
             }
-
             message?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
         }
+    }
+}
+
+@Composable
+private fun ElementPanel(
+    el: Element,
+    data: AppData,
+    designWidth: Int,
+    designHeight: Int,
+    update: ((Element) -> Element) -> Unit,
+    onDelete: () -> Unit
+) {
+    val textual = el.type != "progress" && el.type != "clock" && el.type != "date"
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Text("Selected element", style = MaterialTheme.typography.titleSmall)
+
+        Row(
+            modifier = Modifier.horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            elementTypes.forEach { t ->
+                FilterChip(
+                    selected = el.type == t,
+                    onClick = {
+                        update {
+                            it.copy(
+                                type = t,
+                                text = if (t == "text" && it.text == null) "Text" else it.text,
+                                source = null
+                            )
+                        }
+                    },
+                    label = { Text(t) }
+                )
+            }
+        }
+
+        if (el.type == "text") {
+            OutlinedTextField(
+                value = el.text.orEmpty(),
+                onValueChange = { v -> update { it.copy(text = v) } },
+                label = { Text("Text") },
+                modifier = Modifier.fillMaxWidth()
+            )
+        }
+
+        SourceChips(el, data) { id -> update { it.copy(source = id) } }
+
+        if (el.type == "todo" || el.type == "note") {
+            LabeledSlider("Lines ${el.lines}", el.lines.toFloat(), 1f..12f) { v ->
+                update { it.copy(lines = v.toInt()) }
+            }
+        }
+
+        if (el.type == "clock" || el.type == "date") {
+            Text("Format", style = MaterialTheme.typography.bodySmall)
+            Row(
+                modifier = Modifier.horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                (if (el.type == "clock") clockFormats else dateFormats).forEach { f ->
+                    FilterChip(
+                        selected = el.format == f,
+                        onClick = { update { it.copy(format = f) } },
+                        label = { Text(f) }
+                    )
+                }
+            }
+            OutlinedTextField(
+                value = el.format.orEmpty(),
+                onValueChange = { v -> update { it.copy(format = v.ifBlank { null }) } },
+                label = { Text("Custom format (optional)") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth()
+            )
+        }
+
+        if (el.type != "progress") {
+            LabeledSlider("Size ${el.style.sizeSp} sp", el.style.sizeSp.toFloat(), 8f..72f) { v ->
+                update { it.copy(style = it.style.copy(sizeSp = v.toInt())) }
+            }
+            SwitchRow("Bold", el.style.bold) { b -> update { it.copy(style = it.style.copy(bold = b)) } }
+        }
+
+        if (textual) {
+            Row(
+                modifier = Modifier.horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                listOf("start" to "Left", "center" to "Center", "end" to "Right").forEach { (key, label) ->
+                    FilterChip(
+                        selected = el.align == key,
+                        onClick = { update { it.copy(align = key) } },
+                        label = { Text(label) }
+                    )
+                }
+            }
+            SwitchRow("Italic", el.italic) { b -> update { it.copy(italic = b) } }
+            SwitchRow("Underline", el.underline) { b -> update { it.copy(underline = b) } }
+        }
+
+        if (el.type != "clock" && el.type != "date" && el.type != "battery") {
+            LabeledSlider(
+                "Width ${el.widthDp ?: 0} dp (0 = automatic)",
+                (el.widthDp ?: 0).toFloat(),
+                0f..300f
+            ) { v -> update { it.copy(widthDp = if (v.toInt() == 0) null else v.toInt()) } }
+        }
+
+        LabeledSlider("X position ${el.xDp} dp", el.xDp.toFloat(), 0f..designWidth.toFloat()) { v ->
+            update { it.copy(xDp = v.toInt()) }
+        }
+        LabeledSlider("Y position ${el.yDp} dp", el.yDp.toFloat(), 0f..designHeight.toFloat()) { v ->
+            update { it.copy(yDp = v.toInt()) }
+        }
+
+        ColorField("Color", el.style.color) { hex -> update { it.copy(style = it.style.copy(color = hex)) } }
+
+        SwitchRow("Background chip", el.bgColor != null) { on ->
+            update {
+                it.copy(
+                    bgColor = if (on) "#33FFFFFF" else null,
+                    padDp = if (on && it.padDp == 0) 6 else it.padDp,
+                    radiusDp = if (on && it.radiusDp == 0) 8 else it.radiusDp
+                )
+            }
+        }
+        val chip = el.bgColor
+        if (chip != null) {
+            ColorField("Chip color (8-digit hex adds transparency)", chip) { hex -> update { it.copy(bgColor = hex) } }
+            LabeledSlider("Chip padding ${el.padDp} dp", el.padDp.toFloat(), 0f..24f) { v ->
+                update { it.copy(padDp = v.toInt()) }
+            }
+            LabeledSlider("Chip corner ${el.radiusDp} dp", el.radiusDp.toFloat(), 0f..24f) { v ->
+                update { it.copy(radiusDp = v.toInt()) }
+            }
+        }
+
+        OutlinedTextField(
+            value = el.action?.value.orEmpty(),
+            onValueChange = { v ->
+                update { it.copy(action = if (v.isBlank()) null else Action("openUrl", v)) }
+            },
+            label = { Text("Tap opens link (optional)") },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth()
+        )
+
+        OutlinedButton(onClick = onDelete, modifier = Modifier.fillMaxWidth()) {
+            Text("Delete this element")
+        }
+    }
+}
+
+@Composable
+private fun SourceChips(el: Element, data: AppData, onPick: (String?) -> Unit) {
+    val options: List<Pair<String, String>> = when (el.type) {
+        "todo" -> data.todoLists.map { it.id to it.name }
+        "note" -> data.notes.map { it.id to it.title }
+        "tracker", "progress" -> data.trackers.map { it.id to it.name }
+        "countdown" -> data.countdowns.map { it.id to it.name }
+        else -> return
+    }
+    Text(
+        if (options.isEmpty()) "Nothing to show yet: create one in the Data tab." else "Show which one?",
+        style = MaterialTheme.typography.bodySmall
+    )
+    Row(
+        modifier = Modifier.horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        if (el.type == "progress") {
+            FilterChip(
+                selected = el.source == null,
+                onClick = { onPick(null) },
+                label = { Text("Battery") }
+            )
+        }
+        options.forEach { (id, name) ->
+            FilterChip(
+                selected = el.source == id,
+                onClick = { onPick(id) },
+                label = { Text(name) }
+            )
+        }
+    }
+}
+
+@Composable
+private fun DesignPanel(design: WidgetDesign, change: (WidgetDesign) -> Unit) {
+    val bg = design.background
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Text("Widget settings", style = MaterialTheme.typography.titleSmall)
+
+        OutlinedTextField(
+            value = design.name,
+            onValueChange = { change(design.copy(name = it)) },
+            label = { Text("Design name") },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth()
+        )
+
+        Text("Widget size (grid cells)", style = MaterialTheme.typography.bodySmall)
+        Row(
+            modifier = Modifier.horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            WidgetSize.entries.forEach { s ->
+                FilterChip(
+                    selected = design.widthDp == s.widthDp && design.heightDp == s.heightDp,
+                    onClick = { change(design.copy(widthDp = s.widthDp, heightDp = s.heightDp)) },
+                    label = { Text(s.label) }
+                )
+            }
+        }
+
+        LabeledSlider("Corner radius ${design.cornerRadiusDp} dp", design.cornerRadiusDp.toFloat(), 0f..48f) { v ->
+            change(design.copy(cornerRadiusDp = v.toInt()))
+        }
+
+        ColorField("Background color", bg.color) { hex -> change(design.copy(background = bg.copy(color = hex))) }
+
+        SwitchRow("Gradient", bg.color2 != null) { on ->
+            change(design.copy(background = bg.copy(color2 = if (on) "#45475A" else null)))
+        }
+        val end = bg.color2
+        if (end != null) {
+            ColorField("Gradient end color", end) { hex -> change(design.copy(background = bg.copy(color2 = hex))) }
+            Row(
+                modifier = Modifier.horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                listOf("vertical", "horizontal", "diagonal").forEach { d ->
+                    FilterChip(
+                        selected = bg.direction == d,
+                        onClick = { change(design.copy(background = bg.copy(direction = d))) },
+                        label = { Text(d) }
+                    )
+                }
+            }
+        }
+
+        LabeledSlider("Background opacity ${bg.opacity}%", bg.opacity.toFloat(), 0f..100f) { v ->
+            change(design.copy(background = bg.copy(opacity = v.toInt())))
+        }
+
+        LabeledSlider("Border ${bg.borderDp} dp", bg.borderDp.toFloat(), 0f..8f) { v ->
+            change(design.copy(background = bg.copy(borderDp = v.toInt())))
+        }
+        if (bg.borderDp > 0) {
+            ColorField("Border color", bg.borderColor) { hex ->
+                change(design.copy(background = bg.copy(borderColor = hex)))
+            }
+        }
+    }
+}
+
+@Composable
+private fun SwitchRow(label: String, checked: Boolean, onChange: (Boolean) -> Unit) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text(label)
+        Spacer(Modifier.width(12.dp))
+        Switch(checked = checked, onCheckedChange = onChange)
     }
 }
 

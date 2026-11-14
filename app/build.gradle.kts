@@ -13,8 +13,8 @@ android {
         applicationId = "com.example.widgetmaker"
         minSdk = 26
         targetSdk = 35
-        versionCode = 2
-        versionName = "0.2"
+        versionCode = 3
+        versionName = "0.3"
     }
 
     // Same signing key on every build, so new APKs update the installed app.
